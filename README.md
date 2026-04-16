@@ -1,40 +1,33 @@
-# Chroma Studio: Portrait Enhancement Suite
+# Chroma Studio: Portrait Enhancement Suite (BETA)
 
-This is my first application developed using Antigravity. It is a specialized tool built for professional portrait photographers who need surgical, high-fidelity control over AI-driven restoration.
+Chroma Studio is an AI-powered tool designed to rescue and refine portraits. Its core mission is to slightly enhance under-focus photography and remove backgrounds to make images instantly "website ready" for professional headshots and profiles.
 
-## Core Functionality
+This application is currently in **BETA**. It was videcoded using the Antigravity AI assistant.
 
-### 1. Neural Face Restoration
-The heart of the application is the GFPGAN v1.3 engine. It is configured to enhance facial structures—sharpening eyes, skin textures, and lips—while maintaining the context of the original photograph. The 'Fidelity' slider gives the user direct control over the sharpening weight, allowing for a range between zero-fidelity cleanup and full studio-grade restoration.
+## Core Process
 
-### 2. Optical Glare Removal
-A surgical pipeline specifically designed to resolve glasses reflections. It identifies Green/Cyan monitor glow and pure white specular flashes. Using Navier-Stokes mathematical inpainting, the engine wipes the glare streaks from the lenses, allowing the neural restorer to hallucinate the missing eye detail perfectly behind the frames.
+The primary workflow focuses on taking raw, slightly soft portraits and transforming them into clear, high-fidelity assets. By applying neural sharpening and professional background extraction, it creates a polished look suitable for any digital platform.
 
-### 3. Background Removal
-Integrated background extraction that isolates the subject and places them on a clean, professional studio-white backdrop.
+### Feature Highights (BETA Phase)
 
-### 4. HD Upscaling and Film Grain
-Utilizes Real-ESRGAN x2 Plus for super-resolution. To combat the often 'plastic' look of AI processing, a custom film-grain injection algorithm allows the user to re-introduce organic photographic noise, ensuring the final portrait feels like a real photograph rather than an AI generation.
+- **Website Readiness**: Built-in background removal that replaces busy or distracting environments with a clean, studio-white backdrop.
+- **Under-Focus Rescue**: A neural restoration engine (GFPGAN) that adds sharpness and clarity back into the subject's features.
+- **High-Definition Scaling [BETA]**: Integrated Real-ESRGAN scaling for high-resolution output.
+- **Optical Glare Removal [BETA]**: A surgical tool designed to identify and erase specular glare and monitor reflections from eyeglasses.
+- **Custom Inpaint Masking [BETA]**: A manual paintbrush tool for directive cleanup of blemishes or stray hairs.
 
-### 5. Interactive Inpaint Studio
-The latest evolution of the suite allows for manual intervention. Users can paint a custom mask over blemishes, stray hairs, or complex background artifacts. The backend erases the pixels under the mask and forces the neural network to reconstruct that specific area with high-resolution skin texture.
+## Technical Environment
 
-## Technical Foundations
+- **Hardware Optimization**: Fully accelerated for M1/M2/M3 Mac hardware (specifically optimized for **iMac M1 16GB**) using Metal Performance Shaders (MPS).
+- **Architecture**: Python/FastAPI driving a localized AI pipeline.
+- **Frontend**: React (Vite) with a minimalist, high-contrast design system.
+- **Developer Note**: This was my first application developed while videcoding with Antigravity.
 
-- Hardware Optimization: Fully accelerated for M1/M2 Mac GPUs using Apple's Metal Performance Shaders (MPS).
-- Design System: A minimalist, high-contrast white interface built for focus and clarity.
-- Architecture: A React (Vite) frontend communicating via high-speed WebSockets to a FastAPI-driven Python neural backend.
+## Setup & Launch
 
-## Getting Started
+1. **Hardware**: Recommended for Apple Silicon (M1/M1 Pro/M1 Max/M2/M3) with at least 16GB RAM.
+2. **Prepare Environment**: `pip install -r backend/requirements.txt`
+3. **Install Frontend**: `cd frontend && npm install`
+4. **Launch Suite**: `./launch.sh`
 
-### Prerequisites
-- Python 3.9+
-- Node.js
-- M1/M2/M3 Mac (Recommended for performance)
-
-### Installation
-1. Install Python dependencies: `pip install -r backend/requirements.txt`
-2. Install Frontend dependencies: `cd frontend && npm install`
-3. Launch the suite using the root script: `./launch.sh`
-
-Accessed at http://localhost:5173 🚀📸
+Navigate to: http://localhost:5173 📸🚀
