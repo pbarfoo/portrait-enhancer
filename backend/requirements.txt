@@ -1,0 +1,12 @@
+torch
+torchvision
+fastapi
+uvicorn
+python-multipart
+opencv-python-headless
+gfpgan
+facexlib
+basicsr
+numpy<2.0.0
+Pillow
+requests

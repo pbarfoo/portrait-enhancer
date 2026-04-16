@@ -1,0 +1,19 @@
+# Python Virtual Environment
+venv/
+__pycache__/
+*.pyc
+
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+
+# AI Model Files & Logs
+*.pth
+*.pt
+backend.log
+scratch_*.py
+
+# Operating System
+.DS_Store
+Thumbs.db
