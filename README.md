@@ -1,71 +1,40 @@
-# 📸 Chroma Studio: Professional AI Portrait Suite
+# Chroma Studio: Portrait Enhancement Suite
 
-Chroma Studio is a powerful, localized AI-driven portrait enhancement pipeline designed for photographers and creators. It specializes in surgical retouching—removing optical glare from glasses and restoring facial details with high fidelity—while maintaining 100% skin texture integrity.
+This is my first application developed using Antigravity. It is a specialized tool built for professional portrait photographers who need surgical, high-fidelity control over AI-driven restoration.
 
-![Minimalist UI](https://img.shields.io/badge/UI-Minimalist%20White-white?style=for-the-badge)
-![M1/M2 Optimized](https://img.shields.io/badge/Platform-M1%20Mac%20Optimized-blue?style=for-the-badge)
+## Core Functionality
 
-## ✨ Core Features
+### 1. Neural Face Restoration
+The heart of the application is the GFPGAN v1.3 engine. It is configured to enhance facial structures—sharpening eyes, skin textures, and lips—while maintaining the context of the original photograph. The 'Fidelity' slider gives the user direct control over the sharpening weight, allowing for a range between zero-fidelity cleanup and full studio-grade restoration.
 
-### 👁️ Surgical Optical Glare Removal
-Automatically detects and eradicates Green/Cyan monitor reflections and white specular flashes from eyeglasses. Unlike generic AI filters, Chroma Studio preserves the original eye structure and skin surrounding the frames.
+### 2. Optical Glare Removal
+A surgical pipeline specifically designed to resolve glasses reflections. It identifies Green/Cyan monitor glow and pure white specular flashes. Using Navier-Stokes mathematical inpainting, the engine wipes the glare streaks from the lenses, allowing the neural restorer to hallucinate the missing eye detail perfectly behind the frames.
 
-### 🖌️ Interactive AI Inpaint Studio
-Need more control? Use the built-in Mask Studio to manually paint over blemishes, stray hairs, or complex artifacts.
-- **Navier-Stokes Interpolation**: Mathematically erases artifacts.
-- **Neural Reconstruction**: GFPGAN hallucinates realistic skin texture over the erasure.
-- **Full Control**: Includes high-performance brush size adjustment and an Undo/Redo history stack.
+### 3. Background Removal
+Integrated background extraction that isolates the subject and places them on a clean, professional studio-white backdrop.
 
-### 💎 High-Fidelity Enhancement
-- **Adjustable Fidelity (0-100%)**: Control exactly how much "AI sharpening" is applied, from a subtle clean-up to full studio-grade restoration.
-- **Background Removal**: One-click professional headshot generation with clean white-screen extraction.
-- **HD Upscaling**: 2x Super-Resolution for crisp, large-format printing.
-- **Film Grain Integration**: Inject organic noise to prevent the "AI-plastic" look and maintain photographic soul.
+### 4. HD Upscaling and Film Grain
+Utilizes Real-ESRGAN x2 Plus for super-resolution. To combat the often 'plastic' look of AI processing, a custom film-grain injection algorithm allows the user to re-introduce organic photographic noise, ensuring the final portrait feels like a real photograph rather than an AI generation.
 
-## 🛠️ Tech Stack
+### 5. Interactive Inpaint Studio
+The latest evolution of the suite allows for manual intervention. Users can paint a custom mask over blemishes, stray hairs, or complex background artifacts. The backend erases the pixels under the mask and forces the neural network to reconstruct that specific area with high-resolution skin texture.
 
-- **Backend**: Python 3.9+, FastAPI, OpenCV, PyTorch.
-- **Neural Engine**: GFPGAN v1.3 with M1/M2 (MPS) hardware acceleration.
-- **Frontend**: React (Vite), Lucide-React, HTML5 Canvas.
-- **Design**: Premium Minimalist White Theme with Inter Typography.
+## Technical Foundations
 
-## 🚀 Quick Start
+- Hardware Optimization: Fully accelerated for M1/M2 Mac GPUs using Apple's Metal Performance Shaders (MPS).
+- Design System: A minimalist, high-contrast white interface built for focus and clarity.
+- Architecture: A React (Vite) frontend communicating via high-speed WebSockets to a FastAPI-driven Python neural backend.
 
-### 1. Prerequisites
-Ensure you have Python 3.9+ and Node.js installed on your Mac.
+## Getting Started
 
-### 2. Backend Setup
-```bash
-# Navigate to project
-cd portrait-enhancer
+### Prerequisites
+- Python 3.9+
+- Node.js
+- M1/M2/M3 Mac (Recommended for performance)
 
-# Set up virtual environment
-python3 -m venv venv
-source venv/bin/activate
+### Installation
+1. Install Python dependencies: `pip install -r backend/requirements.txt`
+2. Install Frontend dependencies: `cd frontend && npm install`
+3. Launch the suite using the root script: `./launch.sh`
 
-# Install dependencies
-pip install -r backend/requirements.txt
-```
-
-### 3. Frontend Setup
-```bash
-cd frontend
-npm install
-```
-
-### 4. Launch Studio
-```bash
-# From the root directory
-./launch.sh
-```
-Access the studio at `http://localhost:5173`.
-
-## 📸 Usage Workflow
-1. **Upload**: Drag-and-drop your raw portraits into the queue.
-2. **Mask (Optional)**: If there are specific blemishes, click the **Brush icon** to paint a custom mask.
-3. **Configure**: Set your Sharpening Level, Background preferences, and HD toggle.
-4. **Process**: Hit **Process Batch** and let the neural engine run.
-5. **Download**: Save individual photos or use the **Save All** feature for bulk export.
-
----
-*Created with ❤️ for professional portrait photography.*
+Accessed at http://localhost:5173 🚀📸
