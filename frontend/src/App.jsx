@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Sparkles, Download, X, RefreshCw, Layers, CheckCircle2, Clock, ChevronDown, ChevronUp, Sliders, Brush } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Upload, Sparkles, Download, X, CheckCircle2, ChevronDown, ChevronUp, Sliders, Brush, StopCircle } from 'lucide-react';
 import ImageComparison from './components/ImageComparison';
 import MaskEditor from './components/MaskEditor';
+
+const MAX_FILE_MB = 50;
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/enhance`;
 
 function App() {
   const [queue, setQueue] = useState([]);
@@ -16,6 +19,7 @@ function App() {
   const [removeGlare, setRemoveGlare] = useState(false);
   const [showMaskEditor, setShowMaskEditor] = useState(false);
   
+  const cancelRef = useRef(false);
   const currentItem = currentIndex !== null ? queue[currentIndex] : null;
 
   const handleDragOver = (e) => {
@@ -28,10 +32,16 @@ function App() {
     setIsDragging(false);
   };
 
+  const filterFiles = (files) => {
+    const oversized = files.filter(f => f.size > MAX_FILE_MB * 1024 * 1024);
+    if (oversized.length > 0) alert(`${oversized.map(f => f.name).join(', ')} exceed ${MAX_FILE_MB} MB and were skipped.`);
+    return files.filter(f => f.size <= MAX_FILE_MB * 1024 * 1024);
+  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+    const droppedFiles = filterFiles(Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/')));
     if (droppedFiles.length > 0) {
       const newItems = droppedFiles.map((file, idx) => ({
         id: Date.now() + idx,
@@ -49,7 +59,7 @@ function App() {
   };
 
   const handleUpload = (e) => {
-    const uploadedFiles = Array.from(e.target.files);
+    const uploadedFiles = filterFiles(Array.from(e.target.files));
     if (uploadedFiles.length > 0) {
       const newItems = uploadedFiles.map((file, idx) => ({
         id: Date.now() + idx,
@@ -83,59 +93,84 @@ function App() {
       const reader = new FileReader();
       reader.readAsDataURL(item.file);
       reader.onload = () => {
-        const socket = new WebSocket('ws://localhost:8000/ws/enhance');
+        let attempts = 0;
+        const maxAttempts = 3;
 
-        socket.onopen = () => {
-          socket.send(JSON.stringify({
-            image: reader.result,
-            custom_mask: item.customMask || null,
-            fidelity: fidelity,
-            remove_bg: removeBg,
-            remove_glare: removeGlare,
-            upscale: upscale,
-            grain: grain
-          }));
-        };
-
-        socket.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.progress !== undefined) {
-            updateQueueItem(item.id, { progress: data.progress, status: data.status || 'Processing...' });
-          }
-          
-          if (data.image) {
-            updateQueueItem(item.id, { enhanced: data.image, isProcessing: false, status: 'Done', progress: 100 });
-            socket.close();
+        const connect = () => {
+          if (cancelRef.current) {
+            updateQueueItem(item.id, { isProcessing: false, status: 'Cancelled' });
             resolve();
+            return;
           }
 
-          if (data.error) {
-            updateQueueItem(item.id, { error: data.status, isProcessing: false, status: 'Error' });
+          const socket = new WebSocket(WS_URL);
+          let settled = false;
+
+          const settle = (updates) => {
+            if (settled) return;
+            settled = true;
             socket.close();
+            updateQueueItem(item.id, { isProcessing: false, ...updates });
             resolve();
-          }
+          };
+
+          socket.onopen = () => {
+            socket.send(JSON.stringify({
+              image: reader.result,
+              custom_mask: item.customMask || null,
+              fidelity,
+              remove_bg: removeBg,
+              remove_glare: removeGlare,
+              upscale,
+              grain,
+            }));
+          };
+
+          socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.progress !== undefined) {
+              updateQueueItem(item.id, { progress: data.progress, status: data.status || 'Processing...' });
+            }
+            if (data.image) settle({ enhanced: data.image, status: 'Done', progress: 100 });
+            if (data.error) settle({ error: data.status, status: 'Error' });
+          };
+
+          socket.onerror = () => {
+            attempts++;
+            if (attempts < maxAttempts && !cancelRef.current) {
+              const delay = Math.pow(2, attempts) * 1000;
+              updateQueueItem(item.id, { status: `Retrying in ${delay / 1000}s...` });
+              setTimeout(connect, delay);
+            } else {
+              settle({ error: 'Connection failed', status: 'Failed' });
+            }
+          };
         };
 
-        socket.onerror = () => {
-          updateQueueItem(item.id, { error: 'Connection failed', isProcessing: false, status: 'Failed' });
-          resolve();
-        };
+        connect();
       };
     });
   };
 
   const processAll = async () => {
     if (isProcessing) return;
+    cancelRef.current = false;
     setIsProcessing(true);
-    
+
     for (let i = 0; i < queue.length; i++) {
+      if (cancelRef.current) break;
       if (!queue[i].enhanced) {
         setCurrentIndex(i);
         await processSingleImage(i);
       }
     }
-    
+
+    cancelRef.current = false;
     setIsProcessing(false);
+  };
+
+  const cancelProcessing = () => {
+    cancelRef.current = true;
   };
 
   const saveAll = () => {
@@ -347,12 +382,14 @@ function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-                <button 
-                  className="btn" style={{ flex: 1.5 }} 
-                  onClick={processAll} 
-                  disabled={isProcessing || queue.every(i => i.enhanced)}
+                <button
+                  className="btn" style={{ flex: 1.5 }}
+                  onClick={isProcessing ? cancelProcessing : processAll}
+                  disabled={!isProcessing && queue.every(i => i.enhanced)}
                 >
-                  <Sparkles size={16} /> {isProcessing ? 'Batch Processing...' : 'Process Batch'}
+                  {isProcessing
+                    ? <><StopCircle size={16} /> Cancel</>
+                    : <><Sparkles size={16} /> Process Batch</>}
                 </button>
                 
                 {queue.some(i => i.enhanced) && (

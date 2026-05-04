@@ -16,9 +16,10 @@ from rembg import remove, new_session
 
 app = FastAPI()
 
+_cors_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -138,7 +139,10 @@ async def websocket_enhance(websocket: WebSocket):
         
         # 1. Decode (5%)
         await websocket.send_json({"status": "Decoding...", "progress": 5})
-        img_bytes = base64.b64decode(image_data.split(",")[1])
+        raw_b64 = image_data.split(",")[1]
+        if len(raw_b64) > 50 * 1024 * 1024 * 4 // 3:  # ~50 MB decoded
+            raise ValueError("Image exceeds 50 MB limit")
+        img_bytes = base64.b64decode(raw_b64)
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         h_orig, w_orig = img.shape[:2]
@@ -346,8 +350,12 @@ async def websocket_enhance(websocket: WebSocket):
         await websocket.send_json({"status": "Complete!", "progress": 100, "image": f"data:image/png;base64,{restored_base64}"})
 
     except Exception as e:
-        print(f"Error: {e}")
-        await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})
+        import traceback
+        print(f"Error: {e}\n{traceback.format_exc()}")
+        try:
+            await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})
+        except Exception:
+            pass
     finally:
         await websocket.close()
 
