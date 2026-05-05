@@ -5,6 +5,7 @@ import numpy as np
 import base64
 import json
 import gc
+import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from gfpgan import GFPGANer
@@ -16,7 +17,8 @@ from rembg import remove, new_session
 
 app = FastAPI()
 
-_cors_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+_cors_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
+MAX_IMAGE_B64_BYTES = 50 * 1024 * 1024 * 4 // 3  # base64-encoded ~50 MB
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -140,7 +142,7 @@ async def websocket_enhance(websocket: WebSocket):
         # 1. Decode (5%)
         await websocket.send_json({"status": "Decoding...", "progress": 5})
         raw_b64 = image_data.split(",")[1]
-        if len(raw_b64) > 50 * 1024 * 1024 * 4 // 3:  # ~50 MB decoded
+        if len(raw_b64) > MAX_IMAGE_B64_BYTES:
             raise ValueError("Image exceeds 50 MB limit")
         img_bytes = base64.b64decode(raw_b64)
         nparr = np.frombuffer(img_bytes, np.uint8)
@@ -350,7 +352,6 @@ async def websocket_enhance(websocket: WebSocket):
         await websocket.send_json({"status": "Complete!", "progress": 100, "image": f"data:image/png;base64,{restored_base64}"})
 
     except Exception as e:
-        import traceback
         print(f"Error: {e}\n{traceback.format_exc()}")
         try:
             await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})

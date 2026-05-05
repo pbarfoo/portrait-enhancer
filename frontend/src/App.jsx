@@ -3,7 +3,7 @@ import { Upload, Sparkles, Download, X, CheckCircle2, ChevronDown, ChevronUp, Sl
 import ImageComparison from './components/ImageComparison';
 import MaskEditor from './components/MaskEditor';
 
-const MAX_FILE_MB = 50;
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/enhance`;
 
 function App() {
@@ -33,9 +33,10 @@ function App() {
   };
 
   const filterFiles = (files) => {
-    const oversized = files.filter(f => f.size > MAX_FILE_MB * 1024 * 1024);
-    if (oversized.length > 0) alert(`${oversized.map(f => f.name).join(', ')} exceed ${MAX_FILE_MB} MB and were skipped.`);
-    return files.filter(f => f.size <= MAX_FILE_MB * 1024 * 1024);
+    const oversized = [], valid = [];
+    files.forEach(f => (f.size > MAX_FILE_BYTES ? oversized : valid).push(f));
+    if (oversized.length > 0) alert(`${oversized.map(f => f.name).join(', ')} exceed 50 MB and were skipped.`);
+    return valid;
   };
 
   const handleDrop = (e) => {
