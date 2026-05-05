@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 
-const ImageComparison = ({ before, after, customMask }) => {
+const ImageComparison = ({ before, after }) => {
   const [position, setPosition] = useState(50);
   const containerRef = useRef(null);
 
@@ -28,15 +28,6 @@ const ImageComparison = ({ before, after, customMask }) => {
         style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
       >
         <img src={before} alt="Original" className="img-layer" />
-        
-        {customMask && (
-          <img 
-            src={customMask} 
-            alt="Custom AI Alpha Mask" 
-            className="img-layer" 
-            style={{ opacity: 0.6, mixBlendMode: 'screen', pointerEvents: 'none' }}
-          />
-        )}
       </div>
 
       {/* SLIDER BAR */}

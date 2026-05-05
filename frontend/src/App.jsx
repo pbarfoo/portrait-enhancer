@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Sparkles, Download, X, RefreshCw, Layers, CheckCircle2, Clock, ChevronDown, ChevronUp, Sliders, Brush } from 'lucide-react';
+import { Upload, Sparkles, Download, X, RefreshCw, Layers, CheckCircle2, Clock, ChevronDown, ChevronUp, Sliders } from 'lucide-react';
 import ImageComparison from './components/ImageComparison';
-import MaskEditor from './components/MaskEditor';
 
 function App() {
   const [queue, setQueue] = useState([]);
@@ -14,7 +13,8 @@ function App() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [removeGlare, setRemoveGlare] = useState(false);
-  const [showMaskEditor, setShowMaskEditor] = useState(false);
+  const [isCancelled, setIsCancelled] = useState(false);
+  const currentSocketRef = useRef(null);
   
   const currentItem = currentIndex !== null ? queue[currentIndex] : null;
 
@@ -86,9 +86,9 @@ function App() {
         const socket = new WebSocket('ws://localhost:8000/ws/enhance');
 
         socket.onopen = () => {
+          currentSocketRef.current = socket;
           socket.send(JSON.stringify({
             image: reader.result,
-            custom_mask: item.customMask || null,
             fidelity: fidelity,
             remove_bg: removeBg,
             remove_glare: removeGlare,
@@ -105,19 +105,28 @@ function App() {
           
           if (data.image) {
             updateQueueItem(item.id, { enhanced: data.image, isProcessing: false, status: 'Done', progress: 100 });
+            currentSocketRef.current = null;
             socket.close();
             resolve();
           }
 
           if (data.error) {
             updateQueueItem(item.id, { error: data.status, isProcessing: false, status: 'Error' });
+            currentSocketRef.current = null;
             socket.close();
             resolve();
           }
         };
 
+        socket.onclose = () => {
+          currentSocketRef.current = null;
+          updateQueueItem(item.id, { isProcessing: false });
+          resolve();
+        };
+
         socket.onerror = () => {
           updateQueueItem(item.id, { error: 'Connection failed', isProcessing: false, status: 'Failed' });
+          currentSocketRef.current = null;
           resolve();
         };
       };
@@ -127,14 +136,28 @@ function App() {
   const processAll = async () => {
     if (isProcessing) return;
     setIsProcessing(true);
+    setIsCancelled(false);
     
     for (let i = 0; i < queue.length; i++) {
+      if (isCancelled) break;
       if (!queue[i].enhanced) {
         setCurrentIndex(i);
         await processSingleImage(i);
       }
     }
     
+    setIsProcessing(false);
+    setIsCancelled(false);
+  };
+
+  const cancelProcessing = () => {
+    setIsCancelled(true);
+    if (currentSocketRef.current) {
+      currentSocketRef.current.close();
+    }
+    if (currentItem) {
+      updateQueueItem(currentItem.id, { isProcessing: false, status: 'Stopped' });
+    }
     setIsProcessing(false);
   };
 
@@ -188,7 +211,13 @@ function App() {
       ) : (
         <div className="queue-container">
           {/* SIDEBAR QUEUE */}
-          <div className="queue-sidebar">
+          <div 
+            className="queue-sidebar"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            style={isDragging ? { borderColor: '#000', backgroundColor: '#f8fafc' } : {}}
+          >
             <div className="flex justify-between items-center">
               <span className="text-xs font-bold uppercase tracking-widest text-muted">Queue ({queue.length})</span>
               <button className="text-xs font-bold text-muted hover-primary" onClick={clearQueue}>Clear All</button>
@@ -233,10 +262,9 @@ function App() {
           <div className="flex-col">
             <div style={{ position: 'relative', width: '100%', minHeight: '400px' }}>
               {currentItem && (
-                <ImageComparison 
-                  before={currentItem.preview} 
-                  after={currentItem.enhanced || currentItem.preview} 
-                  customMask={currentItem.customMask}
+                <ImageComparison
+                  before={currentItem.preview}
+                  after={currentItem.enhanced || currentItem.preview}
                 />
               )}
               
@@ -250,6 +278,14 @@ function App() {
                     <div className="progress-track">
                        <div className="progress-fill" style={{ width: `${currentItem.progress}%` }} />
                     </div>
+                    
+                    <button 
+                      onClick={cancelProcessing}
+                      className="btn btn-secondary mt-4" 
+                      style={{ width: '100%', borderColor: '#fecaca', color: '#ef4444' }}
+                    >
+                      <X size={14} /> Stop Processing
+                    </button>
                   </div>
                 </div>
               )}
@@ -361,12 +397,6 @@ function App() {
                   </button>
                 )}
                 
-                {currentItem && !currentItem.enhanced && !isProcessing && (
-                  <button className="btn btn-secondary" onClick={() => setShowMaskEditor(true)} title="Draw Custom Inpainting Mask">
-                    <Brush size={16} /> Mask
-                  </button>
-                )}
-
                 <button className="btn btn-secondary" onClick={() => removeItem(currentItem.id)}>
                   <X size={16} />
                 </button>
@@ -376,16 +406,6 @@ function App() {
         </div>
       )}
       
-      {showMaskEditor && currentItem && (
-        <MaskEditor 
-          imageSrc={currentItem.preview}
-          onSave={(maskBase64) => {
-            updateQueueItem(currentItem.id, { customMask: maskBase64 });
-            setShowMaskEditor(false);
-          }}
-          onCancel={() => setShowMaskEditor(false)}
-        />
-      )}
     </div>
   );
 }
