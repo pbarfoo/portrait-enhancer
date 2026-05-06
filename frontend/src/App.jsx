@@ -383,12 +383,12 @@ function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-                <button 
-                  className="btn" style={{ flex: 1.5 }} 
-                  onClick={processAll} 
+                <button
+                  className="btn" style={{ flex: 1.5 }}
+                  onClick={processAll}
                   disabled={isProcessing || queue.every(i => i.enhanced)}
                 >
-                  <Sparkles size={16} /> {isProcessing ? 'Batch Processing...' : 'Process Batch'}
+                  <Sparkles size={16} /> {isProcessing ? 'Processing...' : queue.length > 1 ? 'Process Batch' : 'Process'}
                 </button>
                 
                 {queue.some(i => i.enhanced) && (
