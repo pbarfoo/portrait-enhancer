@@ -5,6 +5,7 @@ import numpy as np
 import base64
 import json
 import gc
+import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from gfpgan import GFPGANer
@@ -16,9 +17,11 @@ from rembg import remove, new_session
 
 app = FastAPI()
 
+_cors_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
+MAX_IMAGE_B64_BYTES = 50 * 1024 * 1024 * 4 // 3  # base64-encoded ~50 MB
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,6 +128,7 @@ async def websocket_enhance(websocket: WebSocket):
     try:
         data = await websocket.receive_json()
         image_data = data.get("image")
+        custom_mask_data = data.get("custom_mask")
         fidelity = float(data.get("fidelity", 0.5))
         remove_bg = bool(data.get("remove_bg", False))
         remove_glare = bool(data.get("remove_glare", False))
@@ -133,15 +137,32 @@ async def websocket_enhance(websocket: WebSocket):
         
         # LOGGING: Verify parameters
         print(f"--- ENHANCEMENT START ---")
-        print(f"Fidelity: {fidelity}, Removal: {remove_bg}, Glare-Opt: {remove_glare}")
+        print(f"Fidelity: {fidelity}, Removal: {remove_bg}, Glare-Opt: {remove_glare}, Custom Mask: {custom_mask_data is not None}")
         
         # 1. Decode (5%)
         await websocket.send_json({"status": "Decoding...", "progress": 5})
-        img_bytes = base64.b64decode(image_data.split(",")[1])
+        raw_b64 = image_data.split(",")[1]
+        if len(raw_b64) > MAX_IMAGE_B64_BYTES:
+            raise ValueError("Image exceeds 50 MB limit")
+        img_bytes = base64.b64decode(raw_b64)
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         h_orig, w_orig = img.shape[:2]
         
+        # 1.5. Interactive AI Inpainting Overrides
+        if custom_mask_data:
+            await websocket.send_json({"status": "Executing Custom Interpolation...", "progress": 8})
+            mask_bytes = base64.b64decode(custom_mask_data.split(",")[1])
+            mask_arr = np.frombuffer(mask_bytes, np.uint8)
+            custom_mask_img = cv2.imdecode(mask_arr, cv2.IMREAD_GRAYSCALE)
+            
+            # Ensure the mask perfectly aligns mathematically with the original high-res image
+            if custom_mask_img.shape[:2] != (h_orig, w_orig):
+                custom_mask_img = cv2.resize(custom_mask_img, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+                
+            # Mathematically erase the user's manual mask before the AI processes the canvas
+            img = cv2.inpaint(img, custom_mask_img, 3, cv2.INPAINT_NS)
+            
         # Adjust upscaler internal upscale
         cur_outscale = upscale_factor if upscale_factor <= 2 else 2
 
@@ -331,8 +352,11 @@ async def websocket_enhance(websocket: WebSocket):
         await websocket.send_json({"status": "Complete!", "progress": 100, "image": f"data:image/png;base64,{restored_base64}"})
 
     except Exception as e:
-        print(f"Error: {e}")
-        await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})
+        print(f"Error: {e}\n{traceback.format_exc()}")
+        try:
+            await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})
+        except Exception:
+            pass
     finally:
         await websocket.close()
 

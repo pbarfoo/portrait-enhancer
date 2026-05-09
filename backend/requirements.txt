@@ -1,15 +1,13 @@
 torch
 torchvision
 fastapi
-uvicorn[standard]
-websockets
+uvicorn
 python-multipart
 opencv-python-headless
 gfpgan
 facexlib
 basicsr
-realesrgan
-rembg[cpu]
 numpy<2.0.0
 Pillow
 requests
+rembg

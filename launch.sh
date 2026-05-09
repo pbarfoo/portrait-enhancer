@@ -32,8 +32,14 @@ echo "--------------------------------------------------------"
 echo "✨ Ready to process portraits. "
 echo "🛑 Press Ctrl+C inside this terminal window to shut down the servers."
 
-# Open the browser automatically
-open http://localhost:5173
+# Open the browser automatically (cross-platform)
+if command -v xdg-open &>/dev/null; then
+  xdg-open http://localhost:5173
+elif command -v open &>/dev/null; then
+  open http://localhost:5173
+elif command -v start &>/dev/null; then
+  start http://localhost:5173
+fi
 
 # Trap Ctrl+C (SIGINT) to clean up background processes when the user exits
 trap "echo -e '\nShutting down Studio...'; kill -9 $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM

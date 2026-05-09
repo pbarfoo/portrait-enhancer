@@ -1,6 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Sparkles, Download, X, RefreshCw, Layers, CheckCircle2, Clock, ChevronDown, ChevronUp, Sliders } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Upload, Sparkles, Download, X, CheckCircle2, ChevronDown, ChevronUp, Sliders, Brush, StopCircle, Zap, Eye, Layers } from 'lucide-react';
 import ImageComparison from './components/ImageComparison';
+import MaskEditor from './components/MaskEditor';
+
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/enhance`;
+
+function Toggle({ checked, onChange }) {
+  return (
+    <label className="toggle">
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      <span className="toggle-track" />
+    </label>
+  );
+}
 
 function App() {
   const [queue, setQueue] = useState([]);
@@ -13,57 +26,48 @@ function App() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [removeGlare, setRemoveGlare] = useState(false);
-  const [isCancelled, setIsCancelled] = useState(false);
-  const currentSocketRef = useRef(null);
-  
+  const [showMaskEditor, setShowMaskEditor] = useState(false);
+
+  const cancelRef = useRef(false);
   const currentItem = currentIndex !== null ? queue[currentIndex] : null;
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragging(true);
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+
+  const filterFiles = (files) => {
+    const oversized = [], valid = [];
+    files.forEach(f => (f.size > MAX_FILE_BYTES ? oversized : valid).push(f));
+    if (oversized.length > 0) alert(`${oversized.map(f => f.name).join(', ')} exceed 50 MB and were skipped.`);
+    return valid;
   };
 
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
+  const addFiles = (files) => {
+    if (files.length === 0) return;
+    const newItems = files.map((file, idx) => ({
+      id: Date.now() + idx,
+      file,
+      preview: URL.createObjectURL(file),
+      enhanced: null,
+      progress: 0,
+      status: 'Pending',
+      isProcessing: false,
+      error: null,
+    }));
+    setQueue(prev => {
+      if (currentIndex === null) setCurrentIndex(0);
+      return [...prev, ...newItems];
+    });
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
-    if (droppedFiles.length > 0) {
-      const newItems = droppedFiles.map((file, idx) => ({
-        id: Date.now() + idx,
-        file,
-        preview: URL.createObjectURL(file),
-        enhanced: null,
-        progress: 0,
-        status: 'Pending',
-        isProcessing: false,
-        error: null
-      }));
-      setQueue(prev => [...prev, ...newItems]);
-      if (currentIndex === null) setCurrentIndex(0);
-    }
+    addFiles(filterFiles(Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))));
   };
 
   const handleUpload = (e) => {
-    const uploadedFiles = Array.from(e.target.files);
-    if (uploadedFiles.length > 0) {
-      const newItems = uploadedFiles.map((file, idx) => ({
-        id: Date.now() + idx,
-        file,
-        preview: URL.createObjectURL(file),
-        enhanced: null,
-        progress: 0,
-        status: 'Pending',
-        isProcessing: false,
-        error: null
-      }));
-      setQueue(prev => [...prev, ...newItems]);
-      if (currentIndex === null) setCurrentIndex(0);
-    }
+    addFiles(filterFiles(Array.from(e.target.files)));
+    e.target.value = '';
   };
 
   const updateQueueItem = (id, updates) => {
@@ -71,104 +75,99 @@ function App() {
   };
 
   const processSingleImage = (index) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const item = queue[index];
-      if (!item || item.enhanced) {
-        resolve();
-        return;
-      }
+      if (!item || item.enhanced) { resolve(); return; }
 
       updateQueueItem(item.id, { isProcessing: true, status: 'Connecting...', progress: 0 });
 
       const reader = new FileReader();
       reader.readAsDataURL(item.file);
       reader.onload = () => {
-        const socket = new WebSocket('ws://localhost:8000/ws/enhance');
+        let attempts = 0;
+        const maxAttempts = 3;
 
-        socket.onopen = () => {
-          currentSocketRef.current = socket;
-          socket.send(JSON.stringify({
-            image: reader.result,
-            fidelity: fidelity,
-            remove_bg: removeBg,
-            remove_glare: removeGlare,
-            upscale: upscale,
-            grain: grain
-          }));
-        };
-
-        socket.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.progress !== undefined) {
-            updateQueueItem(item.id, { progress: data.progress, status: data.status || 'Processing...' });
-          }
-          
-          if (data.image) {
-            updateQueueItem(item.id, { enhanced: data.image, isProcessing: false, status: 'Done', progress: 100 });
-            currentSocketRef.current = null;
-            socket.close();
+        const connect = () => {
+          if (cancelRef.current) {
+            updateQueueItem(item.id, { isProcessing: false, status: 'Cancelled' });
             resolve();
+            return;
           }
 
-          if (data.error) {
-            updateQueueItem(item.id, { error: data.status, isProcessing: false, status: 'Error' });
-            currentSocketRef.current = null;
+          const socket = new WebSocket(WS_URL);
+          let settled = false;
+
+          const settle = (updates) => {
+            if (settled) return;
+            settled = true;
             socket.close();
+            updateQueueItem(item.id, { isProcessing: false, ...updates });
             resolve();
-          }
+          };
+
+          socket.onopen = () => {
+            socket.send(JSON.stringify({
+              image: reader.result,
+              custom_mask: item.customMask || null,
+              fidelity,
+              remove_bg: removeBg,
+              remove_glare: removeGlare,
+              upscale,
+              grain,
+            }));
+          };
+
+          socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.progress !== undefined) {
+              updateQueueItem(item.id, { progress: data.progress, status: data.status || 'Processing...' });
+            }
+            if (data.image) settle({ enhanced: data.image, status: 'Done', progress: 100 });
+            if (data.error) settle({ error: data.status, status: 'Error' });
+          };
+
+          socket.onerror = () => {
+            attempts++;
+            if (attempts < maxAttempts && !cancelRef.current) {
+              const delay = Math.pow(2, attempts) * 1000;
+              updateQueueItem(item.id, { status: `Retrying in ${delay / 1000}s...` });
+              setTimeout(connect, delay);
+            } else {
+              settle({ error: 'Connection failed', status: 'Failed' });
+            }
+          };
         };
 
-        socket.onclose = () => {
-          currentSocketRef.current = null;
-          updateQueueItem(item.id, { isProcessing: false });
-          resolve();
-        };
-
-        socket.onerror = () => {
-          updateQueueItem(item.id, { error: 'Connection failed', isProcessing: false, status: 'Failed' });
-          currentSocketRef.current = null;
-          resolve();
-        };
+        connect();
       };
     });
   };
 
   const processAll = async () => {
     if (isProcessing) return;
+    cancelRef.current = false;
     setIsProcessing(true);
-    setIsCancelled(false);
-    
     for (let i = 0; i < queue.length; i++) {
-      if (isCancelled) break;
+      if (cancelRef.current) break;
       if (!queue[i].enhanced) {
         setCurrentIndex(i);
         await processSingleImage(i);
       }
     }
-    
+    cancelRef.current = false;
     setIsProcessing(false);
-    setIsCancelled(false);
   };
 
-  const cancelProcessing = () => {
-    setIsCancelled(true);
-    if (currentSocketRef.current) {
-      currentSocketRef.current.close();
-    }
-    if (currentItem) {
-      updateQueueItem(currentItem.id, { isProcessing: false, status: 'Stopped' });
-    }
-    setIsProcessing(false);
-  };
+  const cancelProcessing = () => { cancelRef.current = true; };
 
   const saveAll = () => {
     queue.filter(item => item.enhanced).forEach((item, idx) => {
       setTimeout(() => {
         const a = document.createElement('a');
         a.href = item.enhanced;
-        a.download = `sharpened-${idx + 1}-${(fidelity * 100).toFixed(0)}${upscale > 1 ? '-HD' : ''}${removeBg ? '-whitebg' : ''}.png`;
+        a.download = `portrait-${idx + 1}-${(fidelity * 100).toFixed(0)}pct${upscale > 1 ? '-2x' : ''}${removeBg ? '-whitebg' : ''}.png`;
         a.click();
-      }, idx * 400); 
+      }, idx * 400);
     });
   };
 
@@ -187,225 +186,233 @@ function App() {
     else if (currentIndex >= newQueue.length) setCurrentIndex(newQueue.length - 1);
   };
 
+  const statusDotClass = (item) => {
+    if (item.status === 'Done') return 'done';
+    if (item.isProcessing) return 'processing';
+    if (item.status === 'Error' || item.status === 'Failed') return 'error';
+    return 'pending';
+  };
+
   return (
-    <div className="main-container" style={{ maxWidth: queue.length > 0 ? '1400px' : '800px' }}>
+    <div className="main-container" style={{ maxWidth: queue.length > 0 ? '1340px' : '820px' }}>
       <header>
-        <h1>Portrait <span style={{ color: 'var(--text-light)' }}>Sharpener</span></h1>
-        {queue.length > 0 && <span className="text-xs font-bold uppercase tracking-widest text-muted" style={{ marginLeft: '1rem' }}>Bulk Studio</span>}
+        <div className="header-logo">
+          <Sparkles size={20} color="white" />
+        </div>
+        <h1>Chroma <span style={{ color: 'var(--text-light)', fontWeight: 500 }}>Studio</span></h1>
+        <span className="header-sub">AI Portrait Enhancement</span>
       </header>
 
       {queue.length === 0 ? (
-        <div 
-          className="uploader-box" 
+        <div
+          className="uploader-box"
           onClick={() => document.getElementById('inp').click()}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          style={isDragging ? { borderColor: '#000', background: '#f4f4f5' } : {}}
+          style={isDragging ? { borderColor: 'var(--primary)', background: '#f9f9fb', boxShadow: 'var(--shadow-md)' } : {}}
         >
-          <Upload size={32} style={{ color: isDragging ? '#000' : '#a1a1aa', marginBottom: '1.5rem', transition: 'all 0.3s' }} />
-          <h3>{isDragging ? 'Drop Portraits Here' : 'Select Portraits'}</h3>
-          <p style={{ fontSize: '14px', color: '#94a3b8' }}>Upload or drag-and-drop multiple images for batch sharpening</p>
+          <Upload size={28} style={{ color: isDragging ? 'var(--primary)' : 'var(--text-muted)', marginBottom: '1rem', transition: 'color 0.2s' }} />
+          <h3>{isDragging ? 'Drop portraits here' : 'Select portraits'}</h3>
+          <p>Drag & drop or click to upload — supports batch processing</p>
+          <div className="upload-features">
+            <span className="upload-feature-pill"><Zap size={11} /> Face Restoration</span>
+            <span className="upload-feature-pill"><Eye size={11} /> Glare Removal</span>
+            <span className="upload-feature-pill"><Layers size={11} /> 2× HD Upscale</span>
+          </div>
           <input id="inp" type="file" hidden multiple onChange={handleUpload} accept="image/*" />
         </div>
       ) : (
         <div className="queue-container">
-          {/* SIDEBAR QUEUE */}
-          <div 
-            className="queue-sidebar"
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            style={isDragging ? { borderColor: '#000', backgroundColor: '#f8fafc' } : {}}
-          >
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-bold uppercase tracking-widest text-muted">Queue ({queue.length})</span>
-              <button className="text-xs font-bold text-muted hover-primary" onClick={clearQueue}>Clear All</button>
+          {/* SIDEBAR */}
+          <div className="queue-sidebar">
+            <div className="sidebar-header">
+              <div className="flex items-center">
+                <span style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-light)' }}>
+                  Queue
+                </span>
+                <span className="sidebar-count">{queue.length}</span>
+              </div>
+              <button
+                onClick={clearQueue}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', fontFamily: 'inherit', padding: 0 }}
+                className="advanced-toggle-btn"
+              >
+                Clear all
+              </button>
             </div>
-            
+
             <div className="queue-list">
               {queue.map((item, idx) => (
-                <div 
-                  key={item.id} 
+                <div
+                  key={item.id}
                   className={`queue-item ${currentIndex === idx ? 'active' : ''}`}
                   onClick={() => setCurrentIndex(idx)}
                 >
                   <img src={item.preview} className="queue-node-thumbnail" alt="preview" />
-                  <div className="flex-col" style={{ flex: 1, overflow: 'hidden' }}>
-                    <span className="text-xs font-bold truncate" style={{ maxWidth: '160px' }}>{item.file.name}</span>
-                    <div className="flex items-center gap-2 mt-2">
-                       <span className={`status-dot ${item.status === 'Done' ? 'done' : item.isProcessing ? 'processing' : 'pending'}`} />
-                       <span className="text-xs text-muted font-medium">{item.status}</span>
+                  <div className="queue-item-info">
+                    <div className="queue-item-name">{item.file.name}</div>
+                    <div className="status-chip">
+                      <span className={`status-dot ${statusDotClass(item)}`} />
+                      {item.status}
                     </div>
                     {item.isProcessing && (
-                       <div className="progress-track mt-2" style={{ height: '4px' }}>
-                         <div className="progress-fill" style={{ width: `${item.progress}%` }} />
-                       </div>
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: `${item.progress}%` }} />
+                      </div>
                     )}
                   </div>
-                  {item.enhanced && (
-                    <div className="flex items-center">
-                      <CheckCircle2 size={16} style={{ color: '#10b981' }} />
-                    </div>
-                  )}
+                  {item.enhanced && <CheckCircle2 size={15} style={{ color: '#10b981', flexShrink: 0 }} />}
                 </div>
               ))}
             </div>
 
-            <button className="btn mt-4" onClick={() => document.getElementById('inp-add').click()}>
-              Add More Photos
-              <input id="inp-add" type="file" hidden multiple onChange={handleUpload} accept="image/*" />
-            </button>
+            <div className="sidebar-footer">
+              <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => document.getElementById('inp-add').click()}>
+                <Upload size={14} /> Add photos
+                <input id="inp-add" type="file" hidden multiple onChange={handleUpload} accept="image/*" />
+              </button>
+            </div>
           </div>
 
-          {/* MAIN PLAYER */}
-          <div className="flex-col">
-            <div style={{ position: 'relative', width: '100%', minHeight: '400px' }}>
+          {/* MAIN VIEWER */}
+          <div className="flex-col gap-4">
+            <div style={{ position: 'relative', width: '100%' }}>
               {currentItem && (
                 <ImageComparison
                   before={currentItem.preview}
                   after={currentItem.enhanced || currentItem.preview}
+                  customMask={currentItem.customMask}
                 />
               )}
-              
+
               {currentItem?.isProcessing && (
-                <div className="progress-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, borderRadius: '12px' }}>
-                  <div style={{ width: '100%', maxWidth: '240px', textAlign: 'center' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted">{currentItem.status}</span>
-                      <span className="text-xs font-bold" style={{ color: 'var(--primary)' }}>{currentItem.progress}%</span>
+                <div className="progress-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, borderRadius: 'var(--radius)' }}>
+                  <div style={{ width: '200px', textAlign: 'center' }}>
+                    <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-light)' }}>
+                      {currentItem.status}
+                    </p>
+                    <div className="progress-track" style={{ height: '5px' }}>
+                      <div className="progress-fill" style={{ width: `${currentItem.progress}%`, background: 'var(--primary)' }} />
                     </div>
-                    <div className="progress-track">
-                       <div className="progress-fill" style={{ width: `${currentItem.progress}%` }} />
-                    </div>
-                    
-                    <button 
-                      onClick={cancelProcessing}
-                      className="btn btn-secondary mt-4" 
-                      style={{ width: '100%', borderColor: '#fecaca', color: '#ef4444' }}
-                    >
-                      <X size={14} /> Stop Processing
-                    </button>
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', fontWeight: 700, color: 'var(--primary)' }}>{currentItem.progress}%</p>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="controls-card mt-8">
+            {/* CONTROLS */}
+            <div className="controls-card">
+              {/* Sharpening */}
               <div className="control-group">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className="font-bold uppercase tracking-widest" style={{ fontSize: '10px', color: 'var(--text-light)' }}>Sharpening Level</label>
-                    <span className="font-bold" style={{ color: 'var(--primary)', fontSize: '12px' }}>{(fidelity * 100).toFixed(0)}%</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="0" max="1" step="0.05" 
-                    value={fidelity} 
-                    onChange={(e) => setFidelity(parseFloat(e.target.value))}
-                  />
+                <div className="flex justify-between items-center">
+                  <span className="control-label">Sharpening Level</span>
+                  <span className="control-value">{(fidelity * 100).toFixed(0)}%</span>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" value={fidelity} onChange={e => setFidelity(parseFloat(e.target.value))} />
               </div>
 
-              <div className="control-group">
-                  <label className="flex items-center gap-4 cursor-pointer">
-                      <input 
-                          type="checkbox" checked={removeBg} 
-                          onChange={(e) => setRemoveBg(e.target.checked)}
-                          style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
-                      />
-                      <div className="flex flex-col">
-                          <span className="font-bold uppercase tracking-widest" style={{ fontSize: '10px', color: 'var(--text-light)' }}>Studio White Background</span>
-                          <span className="text-xs text-muted" style={{ marginTop: '0.1rem' }}>Isolate portrait with pure white finish</span>
-                      </div>
+              <div className="section-divider" />
+
+              {/* White Background */}
+              <label className="toggle-row" style={{ cursor: 'pointer' }}>
+                <div className="toggle-text">
+                  <span className="control-label">Studio White Background</span>
+                  <span className="toggle-desc">Isolate subject on pure white</span>
+                </div>
+                <Toggle checked={removeBg} onChange={e => setRemoveBg(e.target.checked)} />
+              </label>
+
+              {/* Advanced drawer */}
+              <div className="section-divider" />
+
+              <button className="advanced-toggle-btn" onClick={() => setShowAdvanced(!showAdvanced)}>
+                <div className="flex items-center gap-2">
+                  <Sliders size={13} />
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Advanced Options</span>
+                </div>
+                {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+
+              {showAdvanced && (
+                <div className="flex-col gap-6">
+                  <label className="toggle-row" style={{ cursor: 'pointer' }}>
+                    <div className="toggle-text">
+                      <span className="control-label">Optical Glare Removal</span>
+                      <span className="toggle-desc">Remove glasses glare & reconstruct eyes</span>
+                    </div>
+                    <Toggle checked={removeGlare} onChange={e => setRemoveGlare(e.target.checked)} />
                   </label>
-              </div>
 
-              {/* ADVANCED TUNING DRAWER */}
-              <div className="mt-4 pt-4" style={{ borderTop: '1px solid #f1f5f9' }}>
-                <button 
-                  className="flex items-center justify-between text-xs font-bold uppercase tracking-widest text-muted hover-primary"
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.5rem 0', width: '100%' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <Sliders size={14} />
-                    <span>Advanced High-Fidelity Tuning</span>
+                  <label className="toggle-row" style={{ cursor: 'pointer' }}>
+                    <div className="toggle-text">
+                      <span className="control-label">2× AI HD Mode</span>
+                      <span className="toggle-desc">Double resolution for maximum detail</span>
+                    </div>
+                    <Toggle checked={upscale === 2} onChange={e => setUpscale(e.target.checked ? 2 : 1)} />
+                  </label>
+
+                  <div className="control-group">
+                    <div className="flex justify-between items-center">
+                      <div className="toggle-text">
+                        <span className="control-label">Filmic Grain</span>
+                        <span className="toggle-desc">Adds natural texture to avoid AI look</span>
+                      </div>
+                      <span className="control-value">{(grain * 100).toFixed(0)}%</span>
+                    </div>
+                    <input type="range" min="0" max="0.5" step="0.01" value={grain} onChange={e => setGrain(parseFloat(e.target.value))} />
                   </div>
-                  {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
+                </div>
+              )}
 
-                {showAdvanced && (
-                   <div className="mt-6 flex-col gap-6">
-                      <div className="control-group">
-                        <label className="flex items-center gap-4 cursor-pointer">
-                            <input 
-                                type="checkbox" checked={removeGlare} 
-                                onChange={(e) => setRemoveGlare(e.target.checked)}
-                                style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
-                            />
-                            <div className="flex flex-col">
-                                <span className="font-bold uppercase tracking-widest" style={{ fontSize: '10px', color: 'var(--text-light)' }}>Optical Glare Removal</span>
-                                <span className="text-xs text-muted" style={{ marginTop: '0.1rem' }}>Erase glasses glare and AI reconstruct eyes</span>
-                            </div>
-                        </label>
-                      </div>
+              {/* Action buttons */}
+              <div className="section-divider" />
 
-                      <div className="control-group">
-                        <label className="flex items-center gap-4 cursor-pointer">
-                            <input 
-                                type="checkbox" checked={upscale === 2} 
-                                onChange={(e) => setUpscale(e.target.checked ? 2 : 1)}
-                                style={{ width: '16px', height: '16px', accentColor: 'var(--primary)' }}
-                            />
-                            <div className="flex flex-col">
-                                <span className="font-bold uppercase tracking-widest" style={{ fontSize: '10px', color: 'var(--text-light)' }}>2x AI HD Mode</span>
-                                <span className="text-xs text-muted" style={{ marginTop: '0.1rem' }}>Double the final resolution for massive detail</span>
-                            </div>
-                        </label>
-                      </div>
-
-                      <div className="control-group mt-4">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div className="flex flex-col">
-                            <span className="font-bold uppercase tracking-widest" style={{ fontSize: '10px', color: 'var(--text-light)' }}>Portrait Texture (Grain)</span>
-                            <span className="text-xs text-muted" style={{ marginTop: '0.1rem' }}>Filmic grain for professional, non-plasticky skin</span>
-                          </div>
-                          <span className="font-bold" style={{ color: 'var(--primary)', fontSize: '12px' }}>{(grain * 100).toFixed(0)}%</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="0" max="0.5" step="0.01" 
-                          value={grain} 
-                          onChange={(e) => setGrain(parseFloat(e.target.value))}
-                        />
-                      </div>
-                   </div>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+              <div className="flex gap-2">
                 <button
-                  className="btn" style={{ flex: 1.5 }}
-                  onClick={processAll}
-                  disabled={isProcessing || queue.every(i => i.enhanced)}
+                  className="btn"
+                  style={{ flex: 1 }}
+                  onClick={isProcessing ? cancelProcessing : processAll}
+                  disabled={!isProcessing && queue.every(i => i.enhanced)}
                 >
-                  <Sparkles size={16} /> {isProcessing ? 'Processing...' : queue.length > 1 ? 'Process Batch' : 'Process'}
+                  {isProcessing
+                    ? <><StopCircle size={15} /> Cancel</>
+                    : <><Sparkles size={15} /> Enhance All</>}
                 </button>
-                
+
                 {queue.some(i => i.enhanced) && (
-                  <button className="btn btn-secondary" onClick={saveAll}>
-                    <Download size={16} /> Save All
+                  <button className="btn btn-secondary" onClick={saveAll} title="Download all enhanced">
+                    <Download size={15} /> Save
                   </button>
                 )}
-                
-                <button className="btn btn-secondary" onClick={() => removeItem(currentItem.id)}>
-                  <X size={16} />
-                </button>
+
+                {currentItem && !currentItem.enhanced && !isProcessing && (
+                  <button className="btn btn-secondary btn-icon" onClick={() => setShowMaskEditor(true)} title="Draw inpainting mask">
+                    <Brush size={15} />
+                  </button>
+                )}
+
+                {currentItem && (
+                  <button className="btn btn-secondary btn-icon btn-danger" onClick={() => removeItem(currentItem.id)} title="Remove image">
+                    <X size={15} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
-      
+
+      {showMaskEditor && currentItem && (
+        <MaskEditor
+          imageSrc={currentItem.preview}
+          onSave={(maskBase64) => {
+            updateQueueItem(currentItem.id, { customMask: maskBase64 });
+            setShowMaskEditor(false);
+          }}
+          onCancel={() => setShowMaskEditor(false)}
+        />
+      )}
     </div>
   );
 }
