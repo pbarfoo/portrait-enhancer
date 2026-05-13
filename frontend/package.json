@@ -1,7 +1,10 @@
 {
-  "name": "frontend",
+  "name": "chroma-studio",
+  "description": "AI-powered portrait enhancement — face restoration, background removal, HD upscaling",
+  "version": "1.0.0",
+  "author": "pbarfoo",
+  "license": "MIT",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

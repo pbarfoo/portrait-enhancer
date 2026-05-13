@@ -100,12 +100,22 @@ function App() {
           const settle = (updates) => {
             if (settled) return;
             settled = true;
+            clearInterval(heartbeat);
             socket.close();
             updateQueueItem(item.id, { isProcessing: false, ...updates });
             resolve();
           };
 
+          let heartbeat;
+          const resetHeartbeat = () => {
+            clearInterval(heartbeat);
+            heartbeat = setInterval(() => {
+              if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: true }));
+            }, 25000);
+          };
+
           socket.onopen = () => {
+            resetHeartbeat();
             socket.send(JSON.stringify({
               image: reader.result,
               custom_mask: item.customMask || null,
@@ -118,7 +128,9 @@ function App() {
           };
 
           socket.onmessage = (event) => {
+            resetHeartbeat();
             const data = JSON.parse(event.data);
+            if (data.pong) return;
             if (data.progress !== undefined) {
               updateQueueItem(item.id, { progress: data.progress, status: data.status || 'Processing...' });
             }
