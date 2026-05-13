@@ -6,6 +6,7 @@ import base64
 import json
 import gc
 import traceback
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from gfpgan import GFPGANer
@@ -15,7 +16,15 @@ from basicsr.utils import img2tensor, tensor2img
 from torchvision.transforms.functional import normalize
 from rembg import remove, new_session
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    global BG_SESSION
+    if BG_SESSION is not None:
+        BG_SESSION = None
+        gc.collect()
+
+app = FastAPI(lifespan=lifespan)
 
 _cors_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")]
 MAX_IMAGE_B64_BYTES = 50 * 1024 * 1024 * 4 // 3  # base64-encoded ~50 MB
@@ -127,6 +136,9 @@ async def websocket_enhance(websocket: WebSocket):
     await websocket.accept()
     try:
         data = await websocket.receive_json()
+        if data.get("ping"):
+            await websocket.send_json({"pong": True})
+            return
         image_data = data.get("image")
         custom_mask_data = data.get("custom_mask")
         fidelity = float(data.get("fidelity", 0.5))
@@ -353,6 +365,7 @@ async def websocket_enhance(websocket: WebSocket):
 
     except Exception as e:
         print(f"Error: {e}\n{traceback.format_exc()}")
+        BG_SESSION = None  # clear potentially stale rembg session
         try:
             await websocket.send_json({"status": f"Error: {str(e)}", "progress": 0, "error": True})
         except Exception:
